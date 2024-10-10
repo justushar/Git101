@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write  # Give the GitHub Actions bot push access
+  pull-requests: write  # Required to merge PRs
+  workflows: write  # Required to update workflows
 
 jobs:
   Enable-Automerge:
@@ -14,7 +16,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
-        
+
       - name: Configure Git
         run: |
           git config --global user.name 'GitHub Action'
@@ -31,14 +33,29 @@ jobs:
           # Checkout the PR branch (the branch that the PR is coming from)
           git checkout ${{ github.event.pull_request.head.ref }}
 
-          # Rebase the PR branch on top of the latest upstream/main branch to avoid conflicts
-          git rebase upstream/main
+          # Rebase the PR branch on top of the latest upstream/main branch
+          git rebase upstream/main || echo "Rebase encountered conflicts."
 
-          # Push the changes back to the student's fork to update their PR branch
-          git push --force-with-lease
+      - name: Resolve Merge Conflicts
+        if: failure()  # This step only runs if the rebase failed due to conflicts
+        run: |
+          git status
+          # Automatically resolve the conflict in `data.yaml` by keeping both changes
+          git merge-file -p git-101/public/data.yaml git-101/public/data.yaml~upstream git-101/public/data.yaml || true
+
+          # Mark conflicts as resolved and continue rebase
+          git add git-101/public/data.yaml
+          git rebase --continue
+
+      - name: Force Push the Resolved Changes
+        run: |
+          # Push to the original remote branch of the PR
+          git push origin HEAD:${{ github.event.pull_request.head.ref }} --force
 
       - name: Auto Merge PR
-        run: gh pr merge --auto --merge "$PR_URL"
+        run: |
+          # Merge the PR automatically if all checks pass
+          gh pr merge --auto --merge "$PR_URL"
         env:
           PR_URL: ${{github.event.pull_request.html_url}}
-          GITHUB_TOKEN: ${{secrets.TALK}}
+          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
